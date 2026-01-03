@@ -1,0 +1,144 @@
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+from keras.datasets import mnist
+from sklearn.metrics import confusion_matrix, classification_report
+from collections import Counter
+
+(train_images, train_labels), (test_images, test_labels) = mnist.load_data()
+
+train_images = train_images / 255.0
+test_images = test_images / 255.0
+
+idx = np.random.choice(60000, size=1000, replace=False)
+train_images_small = train_images[idx]
+train_labels_small = train_labels[idx]
+idx2 = np.random.choice(10000, size=1000, replace=False)
+test_images_small = test_images[idx2]
+test_labels_small = test_labels[idx2]
+
+
+def split_df_train(df: pd.DataFrame, ratio=0.2):
+    df_shuffled = df.sample(frac=1).reset_index(drop=True)
+    split_index = int(len(df_shuffled) * (1 - ratio))
+    df_train = df_shuffled.iloc[:split_index]
+    df_test = df_shuffled.iloc[split_index:]
+    x_train = df_train.drop(columns=["target"])
+    y_train = df_train["target"]
+    x_test = df_test.drop(columns=["target"])
+    y_test = df_test["target"]
+    return x_train, y_train, x_test, y_test
+
+
+class knn_classifier:
+    def __init__(self, k: int = 1):
+        self.k = k
+        self.x_train = None
+        self.y_train = None
+
+    def fit(self, x_train, y_train):
+        self.x_train = x_train.values if isinstance(x_train, pd.DataFrame) else x_train
+        self.y_train = y_train.values if isinstance(y_train, pd.DataFrame) else y_train
+        return self
+
+    def calc_distance(self, point1: np.ndarray, point2: np.ndarray):
+        return np.sqrt(np.sum((point1 - point2) ** 2))
+
+    def calc_majority(self, targets):
+        targets = np.ravel(targets)
+        counts = Counter(targets)
+        predicted_class = counts.most_common(1)[0][0]
+        return predicted_class
+
+    def calculate_k_nearest(self, test_point):
+        distances = [
+            self.calc_distance(test_point, train_point) for train_point in self.x_train
+        ]
+        k_nearest_ind = np.argsort(distances)[: self.k]
+        k_nearest_targets = [self.y_train[index] for index in k_nearest_ind]
+        return k_nearest_targets
+
+    def predict(self, x: pd.DataFrame):
+        predictions = []
+        x = x.values if isinstance(x, pd.DataFrame) else x
+
+        for test_point in x:
+            targets = self.calculate_k_nearest(test_point=test_point)
+            target_prediction = self.calc_majority(targets=targets)
+            predictions.append(target_prediction)
+        return predictions
+
+
+knn = knn_classifier()
+knn.fit(train_images_small, train_labels_small)
+y_pred = knn.predict(test_images_small)
+accuracy = np.mean(y_pred == test_labels_small)
+
+
+def show_errors_and_predictions(y_true, y_pred, X_test=None, class_names=None):
+    """
+    Comprehensive error analysis for classification results
+    """
+    y_true = np.array(y_true).flatten()
+    y_pred = np.array(y_pred).flatten()
+
+    # 1. Overall metrics
+    accuracy = np.mean(y_true == y_pred)
+    print(f"✅ OVERALL ACCURACY: {accuracy:.2%}\n")
+
+    # 2. Classification report
+    print("📋 CLASSIFICATION REPORT:")
+    print(
+        classification_report(
+            y_true,
+            y_pred,
+            target_names=class_names or [str(i) for i in range(10)],
+            digits=3,
+        )
+    )
+
+    # 3. Confusion matrix
+    cm = confusion_matrix(y_true, y_pred)
+    plt.figure(figsize=(12, 5))
+
+    plt.subplot(1, 2, 1)
+    sns.heatmap(
+        cm,
+        annot=True,
+        fmt="d",
+        cmap="Blues",
+        xticklabels=class_names or range(10),
+        yticklabels=class_names or range(10),
+    )
+    plt.title("Confusion Matrix")
+    plt.ylabel("True Label")
+    plt.xlabel("Predicted Label")
+
+    # 4. Error distribution
+    errors = y_true != y_pred
+    error_labels = y_true[errors]
+    plt.subplot(1, 2, 2)
+    plt.hist(error_labels, bins=np.arange(11) - 0.5, rwidth=0.8, color="salmon")
+    plt.title("Distribution of Misclassified Samples")
+    plt.xlabel("True Class")
+    plt.ylabel("Number of Errors")
+    plt.xticks(range(10))
+
+    plt.tight_layout()
+    plt.show()
+
+    # 5. Top confused pairs
+    print("\n🔍 TOP 5 MOST CONFUSED CLASS PAIRS:")
+    cm_no_diag = cm.copy()
+    np.fill_diagonal(cm_no_diag, 0)
+    top_errors = np.unravel_index(np.argsort(cm_no_diag.ravel())[-5:], cm_no_diag.shape)
+    for i in range(5):
+        true_class, pred_class = top_errors[0][::-1][i], top_errors[1][::-1][i]
+        count = cm_no_diag[true_class, pred_class]
+        if count > 0:
+            print(f"  {true_class} → {pred_class}: {count} times")
+
+
+# Run analysis
+show_errors_and_predictions(test_labels_small, y_pred)
